@@ -338,10 +338,15 @@ class Elastic
 		$list_count = max(1, (int)($obj->list_count ?? 20));
 		$page_count = max(1, (int)($obj->page_count ?? 10));
 
+		// type을 지정하지 않으면 기본값(best_fields, OR)이 적용되어, nori가 "24일"을
+		// "24"/"일"처럼 여러 토큰으로 쪼갰을 때 "일"처럼 흔한 토큰 하나만 들어간 무관한
+		// 글까지 매칭되어버린다. phrase로 지정하면 토큰들이 원문과 같은 순서로 붙어 있는
+		// 경우만 매칭되어, DB의 부분 일치(LIKE) 검색과 가까운 결과를 얻을 수 있다.
 		$must = [[
 			'multi_match' => [
 				'query' => $obj->search_keyword,
 				'fields' => ['title^3', 'content'],
+				'type' => 'phrase',
 			],
 		]];
 		$filter = [];
