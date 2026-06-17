@@ -1,0 +1,11 @@
+<query id="requeueFailed" action="update">
+	<tables>
+		<table name="es_search_log" />
+	</tables>
+	<columns>
+		<column name="status" var="new_status" default="pending" notnull="notnull" />
+	</columns>
+	<conditions>
+		<condition operation="equal" column="status" var="old_status" default="failed" notnull="notnull" />
+	</conditions>
+</query>

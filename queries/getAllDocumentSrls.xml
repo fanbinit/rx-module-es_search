@@ -1,0 +1,19 @@
+<query id="getAllDocumentSrls" action="select">
+	<tables>
+		<table name="documents" />
+	</tables>
+	<columns>
+		<column name="document_srl" />
+		<column name="module_srl" />
+	</columns>
+	<conditions>
+		<condition operation="in" column="status" var="statusList" notnull="notnull" />
+		<condition operation="in" column="module_srl" var="module_srl" filter="number" pipe="and" />
+		<condition operation="excess" column="document_srl" var="from_document_srl" filter="number" pipe="and" />
+	</conditions>
+	<navigation>
+		<index var="sort_index" default="document_srl" order="asc" />
+		<list_count var="list_count" default="200" />
+		<page var="page" default="1" />
+	</navigation>
+</query>

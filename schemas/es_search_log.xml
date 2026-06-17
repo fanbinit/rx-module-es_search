@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<table name="es_search_log">
+	<column name="log_srl"      type="bigint"  size="11"  notnull="notnull" primary_key="primary_key" />
+	<column name="module_srl"   type="bigint"  size="11"  notnull="notnull" index="idx_module_srl" />
+	<column name="document_srl" type="bigint"  size="11"  notnull="notnull" index="idx_document_srl" />
+	<column name="action"       type="varchar" size="10"  notnull="notnull" />
+	<column name="status"       type="varchar" size="10"  notnull="notnull" default="pending" index="idx_status" />
+	<column name="message"      type="text"    size="0"   />
+	<column name="regdate"      type="char"    size="14"  notnull="notnull" />
+	<column name="last_update"  type="char"    size="14"  />
+</table>

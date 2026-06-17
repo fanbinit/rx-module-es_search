@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<module>
+
+	<permissions>
+		<permission action="dispEs_searchAdminConfig" target="manager" />
+		<permission action="procEs_searchAdminSaveConfig" target="manager" />
+		<permission action="procEs_searchAdminSyncIndex" target="manager" />
+		<permission action="procEs_searchAdminFlush" target="manager" />
+	</permissions>
+
+	<actions>
+		<action name="dispEs_searchAdminConfig" class="Controllers\Admin" admin-index="true" menu-name="es_search" />
+		<action name="procEs_searchAdminSaveConfig" class="Controllers\Admin" />
+		<action name="procEs_searchAdminSyncIndex" class="Controllers\Admin" />
+		<action name="procEs_searchAdminFlush" class="Controllers\Admin" />
+	</actions>
+
+	<classes>
+		<class type="default" name="Controllers\Base" />
+		<class type="install" name="Controllers\Base" />
+	</classes>
+
+	<eventHandlers>
+		<eventHandler before="document.getDocumentList" class="Controllers\EventHandlers" method="beforeGetDocumentList" />
+		<eventHandler after="document.insertDocument" class="Controllers\EventHandlers" method="afterInsertDocument" />
+		<eventHandler after="document.updateDocument" class="Controllers\EventHandlers" method="afterUpdateDocument" />
+		<eventHandler after="document.deleteDocument" class="Controllers\EventHandlers" method="afterDeleteDocument" />
+		<eventHandler after="moduleHandler.init" class="Controllers\EventHandlers" method="afterModuleHandlerInit" />
+	</eventHandlers>
+
+	<menus>
+		<menu name="es_search" type="all">
+			<title xml:lang="ko">ElasticSearch 연동 검색</title>
+			<title xml:lang="en">ElasticSearch Integration</title>
+		</menu>
+	</menus>
+	<grants></grants>
+
+</module>

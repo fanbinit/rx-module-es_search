@@ -1,0 +1,9 @@
+<query id="deletePendingByDocuments" action="delete">
+	<tables>
+		<table name="es_search_log" />
+	</tables>
+	<conditions>
+		<condition operation="in" column="document_srl" var="document_srls" filter="number" notnull="notnull" />
+		<condition operation="equal" column="status" var="status" default="pending" notnull="notnull" pipe="and" />
+	</conditions>
+</query>

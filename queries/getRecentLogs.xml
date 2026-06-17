@@ -1,0 +1,13 @@
+<query id="getRecentLogs" action="select">
+	<tables>
+		<table name="es_search_log" />
+	</tables>
+	<columns>
+		<column name="*" />
+	</columns>
+	<navigation>
+		<index var="sort_index" default="regdate" order="desc" />
+		<list_count var="list_count" default="50" />
+		<page var="page" default="1" />
+	</navigation>
+</query>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module version="0.2">
+	<title xml:lang="ko">ElasticSearch 연동 검색</title>
+	<title xml:lang="en">ElasticSearch Integration</title>
+	<description xml:lang="ko">게시판 검색을 ElasticSearch로 대체합니다.</description>
+	<version>1.0.0</version>
+	<date>2026-06-18</date>
+	<category>service</category>
+	<author email_address="webmaster@fanbinit.us" link="https://fanbinit.us">
+		<name xml:lang="ko">팬비닛</name>
+		<name xml:lang="en">Fanbinit</name>
+	</author>
+</module>

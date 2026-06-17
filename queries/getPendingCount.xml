@@ -1,0 +1,11 @@
+<query id="getPendingCount" action="select">
+	<tables>
+		<table name="es_search_log" />
+	</tables>
+	<columns>
+		<column name="count(*)" alias="count" />
+	</columns>
+	<conditions>
+		<condition operation="equal" column="status" var="status" default="pending" notnull="notnull" />
+	</conditions>
+</query>
