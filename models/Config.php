@@ -18,6 +18,7 @@ class Config
 		'es_host' => '127.0.0.1',
 		'es_port' => '9200',
 		'es_index' => 'rhymix_documents',
+		'es_comment_index' => 'rhymix_comments',
 		'es_username' => '',
 		'es_password' => '',
 		'member_only_search' => false,

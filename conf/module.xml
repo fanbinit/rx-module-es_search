@@ -25,6 +25,11 @@
 		<eventHandler after="document.insertDocument" class="Controllers\EventHandlers" method="afterInsertDocument" />
 		<eventHandler after="document.updateDocument" class="Controllers\EventHandlers" method="afterUpdateDocument" />
 		<eventHandler after="document.deleteDocument" class="Controllers\EventHandlers" method="afterDeleteDocument" />
+		<eventHandler before="comment.getTotalCommentList" class="Controllers\EventHandlers" method="beforeGetTotalCommentList" />
+		<eventHandler after="comment.insertComment" class="Controllers\EventHandlers" method="afterInsertComment" />
+		<eventHandler after="comment.updateComment" class="Controllers\EventHandlers" method="afterUpdateComment" />
+		<eventHandler after="comment.deleteComment" class="Controllers\EventHandlers" method="afterDeleteComment" />
+		<eventHandler after="comment.moveCommentToTrash" class="Controllers\EventHandlers" method="afterMoveCommentToTrash" />
 		<eventHandler after="moduleHandler.init" class="Controllers\EventHandlers" method="afterModuleHandlerInit" />
 	</eventHandlers>
 

@@ -9,5 +9,7 @@
 		<column name="action"       var="action"       notnull="notnull" />
 		<column name="status"       var="status"       default="pending" notnull="notnull" />
 		<column name="regdate"      var="regdate"      notnull="notnull" />
+		<column name="item_type"    var="item_type"    default="document" notnull="notnull" />
+		<column name="comment_srl"  var="comment_srl"  filter="number" default="0" notnull="notnull" />
 	</columns>
 </query>

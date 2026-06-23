@@ -8,4 +8,6 @@
 	<column name="message"      type="text"    size="0"   />
 	<column name="regdate"      type="char"    size="14"  notnull="notnull" />
 	<column name="last_update"  type="char"    size="14"  />
+	<column name="item_type"    type="varchar" size="10"  notnull="notnull" default="document" index="idx_item_type" />
+	<column name="comment_srl"  type="bigint"  size="11"  notnull="notnull" default="0" index="idx_comment_srl" />
 </table>

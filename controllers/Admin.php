@@ -17,10 +17,12 @@ class Admin extends Base
 		$config = ConfigModel::getConfig();
 		Context::set('config', $config);
 		Context::set('nori_installed', $config->enabled ? ElasticModel::isNoriInstalled() : null);
-		Context::set('pending_count', SearchLogModel::getPendingCount());
-		Context::set('done_count', SearchLogModel::getDoneCount());
-		Context::set('failed_count', SearchLogModel::getFailedCount());
-		Context::set('recent_logs', SearchLogModel::getRecentLogs(20));
+		Context::set('document_pending_count', SearchLogModel::getCountByType('document', 'pending'));
+		Context::set('document_done_count', SearchLogModel::getCountByType('document', 'done'));
+		Context::set('document_failed_count', SearchLogModel::getCountByType('document', 'failed'));
+		Context::set('comment_pending_count', SearchLogModel::getCountByType('comment', 'pending'));
+		Context::set('comment_done_count', SearchLogModel::getCountByType('comment', 'done'));
+		Context::set('comment_failed_count', SearchLogModel::getCountByType('comment', 'failed'));
 
 		$this->setTemplatePath($this->module_path . 'views/admin/');
 		$this->setTemplateFile('config');
@@ -39,6 +41,7 @@ class Admin extends Base
 		$config->es_host = trim((string)$vars->es_host) ?: $config->es_host;
 		$config->es_port = trim((string)$vars->es_port) ?: $config->es_port;
 		$config->es_index = trim((string)$vars->es_index) ?: $config->es_index;
+		$config->es_comment_index = trim((string)$vars->es_comment_index) ?: $config->es_comment_index;
 		$config->es_username = trim((string)($vars->es_username ?? ''));
 		if (strlen(trim((string)($vars->es_password ?? ''))))
 		{
@@ -79,6 +82,7 @@ class Admin extends Base
 	public function procEs_searchAdminFlush()
 	{
 		ElasticModel::flushIndex();
+		ElasticModel::flushCommentIndex();
 		SearchLogModel::clearAll();
 
 		$this->setMessage(Context::getLang('msg_es_search_flush_done'));

@@ -3,8 +3,10 @@
 namespace Rhymix\Modules\Es_search\Models;
 
 use BaseObject;
+use CommentModel;
 use DocumentModel;
 use PageHandler;
+use Rhymix\Framework\Session;
 use Elastic\Elasticsearch\Client;
 use Elastic\Elasticsearch\ClientBuilder;
 
@@ -18,6 +20,7 @@ class Elastic
 {
 	protected static ?Client $_client = null;
 	protected static bool $_indexEnsured = false;
+	protected static bool $_commentIndexEnsured = false;
 
 	/**
 	 * ElasticSearch 클라이언트를 가져온다.
@@ -54,6 +57,17 @@ class Elastic
 	public static function getIndexName(): string
 	{
 		return Config::getConfig()->es_index;
+	}
+
+	/**
+	 * 댓글 색인 이름을 가져온다. 문서 색인과는 매핑 구조가 달라 별도 인덱스로 관리하며,
+	 * 이름도 (자동으로 접미사를 붙이지 않고) 설정에서 독립적으로 지정한다.
+	 *
+	 * @return string
+	 */
+	public static function getCommentIndexName(): string
+	{
+		return Config::getConfig()->es_comment_index;
 	}
 
 	/**
@@ -136,6 +150,76 @@ class Elastic
 			],
 		]);
 		self::$_indexEnsured = true;
+	}
+
+	/**
+	 * 댓글 인덱스가 없으면 문서 인덱스와 동일한 nori 분석기 매핑으로 새로 만든다.
+	 * (분석기는 인덱스마다 별도로 설정해야 하므로 문서 인덱스 생성 시 정의한 설정을 그대로 복사한다.)
+	 *
+	 * @return void
+	 */
+	public static function ensureCommentIndex(): void
+	{
+		if (self::$_commentIndexEnsured)
+		{
+			return;
+		}
+
+		$index = self::getCommentIndexName();
+		try
+		{
+			if (self::getClient()->indices()->exists(['index' => $index])->asBool())
+			{
+				self::$_commentIndexEnsured = true;
+				return;
+			}
+		}
+		catch (\Elastic\Elasticsearch\Exception\ClientResponseException $e)
+		{
+			// 404 등은 무시하고 아래에서 생성한다.
+		}
+
+		self::getClient()->indices()->create([
+			'index' => $index,
+			'body' => [
+				'settings' => [
+					'analysis' => [
+						'tokenizer' => [
+							'es_search_nori_tokenizer' => [
+								'type' => 'nori_tokenizer',
+								'decompound_mode' => 'mixed',
+							],
+						],
+						'analyzer' => [
+							'es_search_nori_analyzer' => [
+								'type' => 'custom',
+								'tokenizer' => 'es_search_nori_tokenizer',
+								'filter' => ['nori_part_of_speech', 'lowercase'],
+							],
+						],
+					],
+				],
+				'mappings' => [
+					'properties' => [
+						'comment_srl' => ['type' => 'long'],
+						'document_srl' => ['type' => 'long'],
+						'module_srl' => ['type' => 'long'],
+						// 댓글 테이블에는 category_srl이 없어 글(문서)에서 가져와 함께 색인한다.
+						// (게시판 검색에서 카테고리로 댓글 검색 결과를 좁힐 수 있도록)
+						'category_srl' => ['type' => 'long'],
+						'member_srl' => ['type' => 'long'],
+						'user_id' => ['type' => 'keyword'],
+						'nick_name' => ['type' => 'keyword'],
+						'content' => ['type' => 'text', 'analyzer' => 'es_search_nori_analyzer'],
+						'is_secret' => ['type' => 'keyword'],
+						'status' => ['type' => 'long'],
+						'regdate' => ['type' => 'keyword'],
+						'list_order' => ['type' => 'long'],
+					],
+				],
+			],
+		]);
+		self::$_commentIndexEnsured = true;
 	}
 
 	/**
@@ -251,6 +335,103 @@ class Elastic
 	}
 
 	/**
+	 * CommentItem을 ES 색인용 body 배열로 변환한다.
+	 *
+	 * @param object $oComment CommentItem
+	 * @param array $document_info 댓글이 달린 글 정보. ['category_srl' => int, 'secret' => bool]
+	 *        (댓글 테이블에는 category_srl이 없어 함께 받아오고, 글이 비밀글이면 댓글 자신의
+	 *        is_secret 값과 무관하게 비밀댓글로 취급한다)
+	 * @return array
+	 */
+	protected static function buildCommentBody($oComment, array $document_info = []): array
+	{
+		$is_secret = ($oComment->get('is_secret') === 'Y' || !empty($document_info['secret'])) ? 'Y' : 'N';
+		return [
+			'comment_srl' => (int)$oComment->comment_srl,
+			'document_srl' => (int)$oComment->get('document_srl'),
+			'module_srl' => (int)$oComment->get('module_srl'),
+			'category_srl' => (int)($document_info['category_srl'] ?? 0),
+			'member_srl' => (int)$oComment->get('member_srl'),
+			'user_id' => (string)$oComment->get('user_id'),
+			'nick_name' => (string)$oComment->get('nick_name'),
+			'content' => $oComment->getContentText(),
+			'is_secret' => $is_secret,
+			'status' => (int)$oComment->get('status'),
+			'regdate' => (string)$oComment->get('regdate'),
+			'list_order' => (int)$oComment->get('list_order'),
+		];
+	}
+
+	/**
+	 * 여러 댓글의 색인/삭제를 ES Bulk API로 한 번에 처리한다. bulkSync()의 댓글 버전.
+	 *
+	 * @param array $comments 색인할 CommentItem 배열
+	 * @param array $document_info_map document_srl => ['category_srl' => int, 'secret' => bool] (buildCommentBody용)
+	 * @param array $delete_srls 삭제할 comment_srl 배열
+	 * @return array comment_srl => null(성공) | string(에러 메시지)
+	 */
+	public static function bulkSyncComments(array $comments, array $document_info_map, array $delete_srls): array
+	{
+		if (!$comments && !$delete_srls)
+		{
+			return [];
+		}
+
+		self::ensureCommentIndex();
+		$index = self::getCommentIndexName();
+
+		$body = [];
+		$order = [];
+		foreach ($comments as $oComment)
+		{
+			$srl = (int)$oComment->comment_srl;
+			$document_srl = (int)$oComment->get('document_srl');
+			$body[] = ['index' => ['_index' => $index, '_id' => (string)$srl]];
+			$body[] = self::buildCommentBody($oComment, $document_info_map[$document_srl] ?? []);
+			$order[] = $srl;
+		}
+		foreach ($delete_srls as $srl)
+		{
+			$srl = (int)$srl;
+			$body[] = ['delete' => ['_index' => $index, '_id' => (string)$srl]];
+			$order[] = $srl;
+		}
+
+		$response = self::getClient()->bulk(['body' => $body])->asArray();
+
+		$results = [];
+		foreach ($response['items'] ?? [] as $i => $item)
+		{
+			$action = array_key_first($item);
+			$status = (int)($item[$action]['status'] ?? 500);
+			$ok = ($status >= 200 && $status < 300) || ($action === 'delete' && $status === 404);
+			$results[$order[$i]] = $ok ? null : ($item[$action]['error']['reason'] ?? ('HTTP ' . $status));
+		}
+		return $results;
+	}
+
+	/**
+	 * 댓글 색인을 비운다 (인덱스를 삭제하고, nori 분석기 매핑으로 바로 다시 만든다).
+	 *
+	 * @return void
+	 */
+	public static function flushCommentIndex(): void
+	{
+		try
+		{
+			self::getClient()->indices()->delete([
+				'index' => self::getCommentIndexName(),
+			]);
+		}
+		catch (\Elastic\Elasticsearch\Exception\ClientResponseException $e)
+		{
+			// 인덱스가 이미 없는 경우 무시한다 (404).
+		}
+		self::$_commentIndexEnsured = false;
+		self::ensureCommentIndex();
+	}
+
+	/**
 	 * 색인 전체를 비운다 (인덱스를 삭제하고, nori 분석기 매핑으로 바로 다시 만든다).
 	 *
 	 * @return void
@@ -333,11 +514,21 @@ class Elastic
 	 * ElasticSearch로 게시판 검색을 수행하고, document.getDocumentList와
 	 * 동일한 형태의 BaseObject를 만들어 반환한다.
 	 *
+	 * 상담 게시판 글도 다른 글과 동일하게 여기서 검색된다 - "관리자가 아니면 자기 글만"
+	 * 제약은 이 메소드가 아니라 호출부(board.view.php 등)가 $obj->member_srl을 적절히
+	 * 좁혀서 넘겨주는 것에 의존한다. 자세한 내용과 새 호출부 추가 시 주의사항은
+	 * EventHandlers 클래스 docblock의 "상담 게시판 노출 범위 전제" 설명을 참고할 것.
+	 *
 	 * @param object $obj
 	 * @return BaseObject
 	 */
 	public static function search(object $obj): BaseObject
 	{
+		if ((string)($obj->search_target ?? '') === 'comment')
+		{
+			return self::searchComment($obj);
+		}
+
 		$page = max(1, (int)($obj->page ?? 1));
 		$list_count = max(1, (int)($obj->list_count ?? 20));
 		$page_count = max(1, (int)($obj->page_count ?? 10));
@@ -394,6 +585,215 @@ class Elastic
 		}
 
 		return self::buildListOutput($data, $total_count, $obj);
+	}
+
+	/**
+	 * search_target=comment 검색을 수행한다 (document.getDocumentListWithinComment에 대응).
+	 *
+	 * 댓글 내용으로 검색하지만, 목록에는 댓글이 아니라 "댓글이 달린 글"을 중복 없이 표시해야
+	 * 한다 (한 글에 매칭되는 댓글이 여러 개여도 글은 한 번만 나온다). ES의 collapse 기능으로
+	 * document_srl 기준 중복을 제거하고, 전체 글 수는 cardinality 집계로 따로 구한다
+	 * (collapse는 응답에 원본 hit 수를 그대로 주기 때문에 total을 그대로 쓰면 댓글 수가 되어버린다).
+	 *
+	 * 상담 게시판 댓글의 노출 범위 제어는 호출부 의존이다 - EventHandlers 클래스 docblock의
+	 * "상담 게시판 노출 범위 전제" 참고.
+	 *
+	 * @param object $obj
+	 * @return BaseObject
+	 */
+	protected static function searchComment(object $obj): BaseObject
+	{
+		$page = max(1, (int)($obj->page ?? 1));
+		$list_count = max(1, (int)($obj->list_count ?? 20));
+
+		$keyword = (string)$obj->search_keyword;
+		$must = [[
+			'multi_match' => [
+				'query' => $keyword,
+				'fields' => ['content'],
+				'type' => 'phrase',
+			],
+		]];
+
+		// 색인에는 발행 완료(RX_STATUS_PUBLIC) 댓글만 들어가지만, 방어적으로 한 번 더 확인한다.
+		$filter = [['term' => ['status' => \RX_STATUS_PUBLIC]]];
+
+		if (!empty($obj->module_srl))
+		{
+			$filter[] = ['terms' => ['module_srl' => array_map('intval', (array)$obj->module_srl)]];
+		}
+		if (!empty($obj->exclude_module_srl))
+		{
+			$filter[] = ['bool' => ['must_not' => [
+				['terms' => ['module_srl' => array_map('intval', (array)$obj->exclude_module_srl)]],
+			]]];
+		}
+		if (!empty($obj->category_srl))
+		{
+			$filter[] = ['terms' => ['category_srl' => array_map('intval', (array)$obj->category_srl)]];
+		}
+		// 비밀 댓글은, 관리자가 아니면 검색 결과에서 내용이 노출되지 않도록 제외한다.
+		if (!Session::isAdmin())
+		{
+			$filter[] = ['term' => ['is_secret' => 'N']];
+		}
+
+		$order_type = (($obj->order_type ?? 'asc') === 'desc') ? 'desc' : 'asc';
+
+		$response = self::getClient()->search([
+			'index' => self::getCommentIndexName(),
+			'body' => [
+				'query' => ['bool' => ['must' => $must, 'filter' => $filter]],
+				'collapse' => ['field' => 'document_srl'],
+				'sort' => [['list_order' => $order_type], ['comment_srl' => 'desc']],
+				'from' => ($page - 1) * $list_count,
+				'size' => $list_count,
+				'_source' => ['document_srl'],
+				'aggs' => ['doc_count' => ['cardinality' => ['field' => 'document_srl']]],
+			],
+		])->asArray();
+
+		$hits = $response['hits']['hits'] ?? [];
+		$total_count = (int)($response['aggregations']['doc_count']['value'] ?? 0);
+
+		$srls = array_map(fn($hit) => (int)$hit['_source']['document_srl'], $hits);
+		$documents_map = $srls ? DocumentModel::getDocuments($srls) : [];
+
+		$data = [];
+		foreach ($srls as $srl)
+		{
+			if (isset($documents_map[$srl]))
+			{
+				$data[] = $documents_map[$srl];
+			}
+		}
+
+		// ES 정렬은 매칭된 댓글 기준(list_order)이라, 게시판이 요청한 글 기준 정렬(예: 조회수)과
+		// 다를 수 있다. 페이지 안의 결과(최대 list_count건)만 다시 정렬해서 보여준다.
+		self::sortDocumentsLikeRequested($data, $obj);
+
+		return self::buildListOutput($data, $total_count, $obj);
+	}
+
+	/**
+	 * 댓글 게시판 검색(comment) 결과를 게시판이 요청한 정렬 기준으로 다시 정렬한다.
+	 * searchComment()는 ES 단계에서는 댓글 자체의 list_order로 정렬하므로, 최종 페이지
+	 * 안에서는 게시판이 기대하는 글 기준 정렬(resolveSort()와 동일한 필드)로 맞춰준다.
+	 *
+	 * @param array $documents DocumentItem 배열 (참조로 직접 정렬한다)
+	 * @param object $obj
+	 * @return void
+	 */
+	protected static function sortDocumentsLikeRequested(array &$documents, object $obj): void
+	{
+		$sort_fields = ['list_order', 'update_order', 'regdate', 'readed_count', 'voted_count', 'comment_count'];
+		$sort_index = (string)($obj->sort_index ?? 'list_order');
+		$field = in_array($sort_index, $sort_fields) ? $sort_index : 'list_order';
+		$order_type = (($obj->order_type ?? 'asc') === 'desc') ? -1 : 1;
+
+		usort($documents, function ($a, $b) use ($field, $order_type) {
+			return ($a->get($field) <=> $b->get($field)) * $order_type;
+		});
+	}
+
+	/**
+	 * comment.getTotalCommentList(예: dispMemberOwnComment, 내 댓글 검색)의 content 검색을
+	 * ES로 대체한다. 이 목록은 글 단위 중복 제거 없이 "댓글" 하나하나를 그대로 보여준다.
+	 *
+	 * 반환하는 data는 CommentModel::getTotalCommentList()가 평소 DB에서 읽어오는 행과
+	 * 동일한 형태(원본 comments 컬럼 + document_title 등 document_* 별칭)의 stdClass
+	 * 배열이어야 한다. 호출부가 이 배열을 그대로 CommentItem으로 감싸서 쓰기 때문이다.
+	 *
+	 * 상담 게시판 댓글의 노출 범위 제어는 호출부 의존이다 - EventHandlers 클래스 docblock의
+	 * "상담 게시판 노출 범위 전제" 참고.
+	 *
+	 * @param object $args comment.getTotalCommentList가 만든 쿼리 인자 (s_content, s_member_srl 등)
+	 * @param string $keyword
+	 * @return BaseObject
+	 */
+	public static function searchMemberComments(object $args, string $keyword): BaseObject
+	{
+		$page = max(1, (int)($args->page ?? 1));
+		$list_count = max(1, (int)($args->list_count ?? 20));
+
+		$must = [[
+			'multi_match' => [
+				'query' => $keyword,
+				'fields' => ['content'],
+				'type' => 'phrase',
+			],
+		]];
+
+		$filter = [['term' => ['status' => \RX_STATUS_PUBLIC]]];
+		if (!empty($args->s_member_srl))
+		{
+			$filter[] = ['terms' => ['member_srl' => array_map('intval', (array)$args->s_member_srl)]];
+		}
+		if (!empty($args->s_module_srl))
+		{
+			$filter[] = ['terms' => ['module_srl' => array_map('intval', (array)$args->s_module_srl)]];
+		}
+		if (!empty($args->exclude_module_srl))
+		{
+			$filter[] = ['bool' => ['must_not' => [
+				['terms' => ['module_srl' => array_map('intval', (array)$args->exclude_module_srl)]],
+			]]];
+		}
+
+		// comment.getTotalCommentList의 기본 정렬은 항상 comments.list_order 오름차순으로 고정되어 있다.
+		$response = self::getClient()->search([
+			'index' => self::getCommentIndexName(),
+			'body' => [
+				'query' => ['bool' => ['must' => $must, 'filter' => $filter]],
+				'sort' => [['list_order' => 'asc'], ['comment_srl' => 'asc']],
+				'from' => ($page - 1) * $list_count,
+				'size' => $list_count,
+				'_source' => ['comment_srl'],
+			],
+		])->asArray();
+
+		$hits = $response['hits']['hits'] ?? [];
+		$total_count = (int)($response['hits']['total']['value'] ?? 0);
+
+		$comment_srls = array_map(fn($hit) => (int)$hit['_source']['comment_srl'], $hits);
+		$comments_map = $comment_srls ? CommentModel::getComments($comment_srls) : [];
+
+		$document_srls = [];
+		foreach ($comments_map as $oComment)
+		{
+			$document_srls[(int)$oComment->get('document_srl')] = true;
+		}
+		$documents_map = $document_srls
+			? DocumentModel::getDocuments(array_keys($document_srls), false, false, [
+				'document_srl', 'module_srl', 'member_srl', 'user_id', 'user_name', 'nick_name', 'title',
+			])
+			: [];
+
+		$data = [];
+		foreach ($comment_srls as $srl)
+		{
+			if (!isset($comments_map[$srl]))
+			{
+				continue;
+			}
+			$oComment = $comments_map[$srl];
+			$row = (object)$oComment->variables;
+
+			$document_srl = (int)$oComment->get('document_srl');
+			if (isset($documents_map[$document_srl]))
+			{
+				$oDocument = $documents_map[$document_srl];
+				$row->module_srl = $oDocument->get('module_srl');
+				$row->document_member_srl = $oDocument->get('member_srl');
+				$row->document_user_id = $oDocument->get('user_id');
+				$row->document_user_name = $oDocument->get('user_name');
+				$row->document_nick_name = $oDocument->get('nick_name');
+				$row->document_title = $oDocument->get('title');
+			}
+			$data[] = $row;
+		}
+
+		return self::buildListOutput($data, $total_count, $args);
 	}
 
 	/**

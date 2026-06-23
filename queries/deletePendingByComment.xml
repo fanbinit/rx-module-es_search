@@ -1,0 +1,10 @@
+<query id="deletePendingByComment" action="delete">
+	<tables>
+		<table name="es_search_log" />
+	</tables>
+	<conditions>
+		<condition operation="equal" column="comment_srl" var="comment_srl" filter="number" notnull="notnull" />
+		<condition operation="equal" column="status" var="status" default="pending" notnull="notnull" pipe="and" />
+		<condition operation="equal" column="item_type" var="item_type" default="comment" notnull="notnull" pipe="and" />
+	</conditions>
+</query>

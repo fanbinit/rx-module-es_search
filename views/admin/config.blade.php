@@ -45,6 +45,12 @@
 			</div>
 		</div>
 		<div class="x_control-group">
+			<label class="x_control-label">{{ $lang->es_search_comment_index }}</label>
+			<div class="x_controls">
+				<input type="text" name="es_comment_index" value="{{ $config->es_comment_index }}" />
+			</div>
+		</div>
+		<div class="x_control-group">
 			<label class="x_control-label">{{ $lang->es_search_auth }}</label>
 			<div class="x_controls">
 				<input type="text" name="es_username" value="{{ $config->es_username }}" placeholder="{{ $lang->es_search_username }}" />
@@ -87,7 +93,8 @@
 
 <section class="section">
 	<h2>{{ $lang->es_search_sync_status }}</h2>
-	<p>{{ sprintf($lang->es_search_pending_count, $pending_count) }} / {{ sprintf($lang->es_search_done_count, $done_count) }} / {{ sprintf($lang->es_search_failed_count, $failed_count) }}</p>
+	<p>{{ $lang->es_search_sync_status_documents }}: {{ sprintf($lang->es_search_pending_count, $document_pending_count) }} / {{ sprintf($lang->es_search_done_count, $document_done_count) }} / {{ sprintf($lang->es_search_failed_count, $document_failed_count) }}</p>
+	<p>{{ $lang->es_search_sync_status_comments }}: {{ sprintf($lang->es_search_pending_count, $comment_pending_count) }} / {{ sprintf($lang->es_search_done_count, $comment_done_count) }} / {{ sprintf($lang->es_search_failed_count, $comment_failed_count) }}</p>
 
 	<form action="{{ getUrl() }}" method="post" style="display:inline;">
 		<input type="hidden" name="module" value="admin" />
@@ -102,29 +109,59 @@
 		<input type="hidden" name="success_return_url" value="{{ getCurrentPageUrl() }}" />
 		<button class="x_btn x_btn-danger" type="submit">{{ $lang->es_search_flush_now }}</button>
 	</form>
+</section>
 
-	@if(count($recent_logs))
+<section class="section">
+	<h2>{{ $lang->es_search_index_fields }}</h2>
+
+	<h3>{{ $lang->es_search_sync_status_documents }} ({{ $config->es_index }})</h3>
 	<table class="x_table">
 		<thead>
 			<tr>
-				<th>{{ $lang->es_search_log_document_srl }}</th>
-				<th>{{ $lang->es_search_log_action }}</th>
-				<th>{{ $lang->es_search_log_status }}</th>
-				<th>{{ $lang->es_search_log_regdate }}</th>
-				<th>{{ $lang->es_search_log_message }}</th>
+				<th>{{ $lang->es_search_field }}</th>
+				<th>{{ $lang->es_search_field_desc }}</th>
 			</tr>
 		</thead>
 		<tbody>
-			@foreach($recent_logs as $log)
-			<tr>
-				<td>{{ $log->document_srl }}</td>
-				<td>{{ $log->action }}</td>
-				<td>{{ $log->status }}</td>
-				<td>{{ $log->regdate }}</td>
-				<td>{{ $log->message }}</td>
-			</tr>
-			@endforeach
+			<tr><td>document_srl</td><td>{{ $lang->es_search_field_document_srl }}</td></tr>
+			<tr><td>module_srl</td><td>{{ $lang->es_search_field_module_srl }}</td></tr>
+			<tr><td>category_srl</td><td>{{ $lang->es_search_field_category_srl }}</td></tr>
+			<tr><td>member_srl</td><td>{{ $lang->es_search_field_member_srl }}</td></tr>
+			<tr><td>user_id</td><td>{{ $lang->es_search_field_user_id }}</td></tr>
+			<tr><td>nick_name</td><td>{{ $lang->es_search_field_nick_name }}</td></tr>
+			<tr><td>title</td><td>{{ $lang->es_search_field_title }}</td></tr>
+			<tr><td>content</td><td>{{ $lang->es_search_field_content_document }}</td></tr>
+			<tr><td>status</td><td>{{ $lang->es_search_field_status_document }}</td></tr>
+			<tr><td>regdate</td><td>{{ $lang->es_search_field_regdate }}</td></tr>
+			<tr><td>list_order</td><td>{{ $lang->es_search_field_list_order }}</td></tr>
+			<tr><td>update_order</td><td>{{ $lang->es_search_field_update_order }}</td></tr>
+			<tr><td>readed_count</td><td>{{ $lang->es_search_field_readed_count }}</td></tr>
+			<tr><td>voted_count</td><td>{{ $lang->es_search_field_voted_count }}</td></tr>
+			<tr><td>comment_count</td><td>{{ $lang->es_search_field_comment_count }}</td></tr>
 		</tbody>
 	</table>
-	@endif
+
+	<h3>{{ $lang->es_search_sync_status_comments }} ({{ $config->es_comment_index }})</h3>
+	<table class="x_table">
+		<thead>
+			<tr>
+				<th>{{ $lang->es_search_field }}</th>
+				<th>{{ $lang->es_search_field_desc }}</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr><td>comment_srl</td><td>{{ $lang->es_search_field_comment_srl }}</td></tr>
+			<tr><td>document_srl</td><td>{{ $lang->es_search_field_comment_document_srl }}</td></tr>
+			<tr><td>module_srl</td><td>{{ $lang->es_search_field_module_srl }}</td></tr>
+			<tr><td>category_srl</td><td>{{ $lang->es_search_field_comment_category_srl }}</td></tr>
+			<tr><td>member_srl</td><td>{{ $lang->es_search_field_member_srl }}</td></tr>
+			<tr><td>user_id</td><td>{{ $lang->es_search_field_user_id }}</td></tr>
+			<tr><td>nick_name</td><td>{{ $lang->es_search_field_nick_name }}</td></tr>
+			<tr><td>content</td><td>{{ $lang->es_search_field_content_comment }}</td></tr>
+			<tr><td>is_secret</td><td>{{ $lang->es_search_field_is_secret }}</td></tr>
+			<tr><td>status</td><td>{{ $lang->es_search_field_status_comment }}</td></tr>
+			<tr><td>regdate</td><td>{{ $lang->es_search_field_regdate }}</td></tr>
+			<tr><td>list_order</td><td>{{ $lang->es_search_field_list_order }}</td></tr>
+		</tbody>
+	</table>
 </section>

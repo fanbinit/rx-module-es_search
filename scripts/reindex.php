@@ -12,12 +12,21 @@
  *
  * 옵션:
  *   --module=<mid 또는 module_srl>   특정 게시판만 대상으로 한다 (생략 시 전체 게시판)
- *   --scan-batch=<n>                 DB에서 한 번에 조회할 문서 수 (기본 500)
- *   --limit=<n>                      등록할 문서 수 제한 (테스트용, 생략 시 전체)
- *   --sync                           등록 후 대기열을 모두 즉시 처리한다 (생략 시 등록만 하고
+ *   --consultation-only              상담 게시판으로 설정된 게시판만 대상으로 한다.
+ *                                    --module과 같이 쓰면 그 게시판이 상담 게시판일 때만
+ *                                    동작한다 (--module 단독으로는 일반 게시판도 가능하지만,
+ *                                    이 옵션은 상담 게시판 전용 스캔이다).
+ *   --target=document|comment|all    스캔(대기열 등록) 대상을 글/댓글 중 하나로 한정한다
+ *                                    (생략 시 all - 둘 다 처리). --sync-only와 함께 쓰면 무시된다.
+ *   --scan-batch=<n>                 DB에서 한 번에 조회할 행 수 (기본 500)
+ *   --limit=<n>                      등록할 건수 제한 (테스트용, 생략 시 전체)
+ *   --sync                           스캔 후 대기열을 모두 즉시 처리한다 (생략 시 등록만 하고
  *                                    실제 색인은 관리자 화면의 수동 동기화 또는
  *                                    자동 주기 동기화에 맡긴다)
- *   --sync-batch=<n>                 --sync 사용 시 1회 처리(ES Bulk 요청 1번) 건수 (기본 500)
+ *   --sync-only                      스캔(대기열 등록) 단계를 건너뛰고, 이미 쌓여 있는
+ *                                    대기열만 즉시 처리한다 (--target/--module/--limit 무시,
+ *                                    --sync도 자동으로 켜진 것으로 취급한다)
+ *   --sync-batch=<n>                 --sync 또는 --sync-only 사용 시 1회 처리(ES Bulk 요청 1번) 건수 (기본 500)
  */
 require_once __DIR__ . '/../../../common/scripts/common.php';
 
@@ -77,29 +86,71 @@ if (!empty($options['module']))
 	}
 }
 
+// --consultation-only: 상담 게시판으로 설정된 게시판(들)만 스캔 대상으로 한정한다.
+$consultation_only = isset($options['consultation-only']);
+if ($consultation_only)
+{
+	$consultation_srls = EventHandlers::getConsultationModuleSrls();
+	if ($module_srl)
+	{
+		if (!in_array($module_srl, $consultation_srls))
+		{
+			echo "Error: module '{$options['module']}' is not a consultation board.\n";
+			exit(1);
+		}
+		$module_filter = $module_srl;
+	}
+	else
+	{
+		if (!$consultation_srls)
+		{
+			echo "No consultation-enabled boards found. Nothing to do.\n";
+			exit(0);
+		}
+		$module_filter = $consultation_srls;
+	}
+	echo "Consultation-only mode: targeting module_srl " . implode(',', (array)$module_filter) . "\n";
+}
+else
+{
+	$module_filter = $module_srl;
+}
+
 $scan_batch = max(1, (int)($options['scan-batch'] ?? 500));
 $limit = isset($options['limit']) ? max(1, (int)$options['limit']) : null;
-$do_sync = isset($options['sync']);
+$sync_only = isset($options['sync-only']);
+$do_sync = $sync_only || isset($options['sync']);
+
+$target = (string)($options['target'] ?? 'all');
+if (!in_array($target, ['document', 'comment', 'all']))
+{
+	echo "Error: --target must be one of document, comment, all.\n";
+	exit(1);
+}
+$scan_documents = !$sync_only && ($target === 'document' || $target === 'all');
+$scan_comments = !$sync_only && ($target === 'comment' || $target === 'all');
 
 $status_list = [DocumentModel::getConfigStatus('public'), DocumentModel::getConfigStatus('secret')];
 
+if ($scan_documents)
+{
+
 // 전체 대상 문서 수를 미리 구해서 진행률 표시줄의 분모로 쓴다.
-$total_documents = SearchLogModel::getDocumentCount($status_list, $module_srl);
+$total_documents = SearchLogModel::getDocumentCount($status_list, $module_filter);
 if ($limit)
 {
 	$total_documents = min($total_documents, $limit);
 }
 
-echo "Scanning documents" . ($module_srl ? " (module_srl={$module_srl})" : ' (all boards)') . " - {$total_documents} total...\n";
+echo "Scanning documents" . ($module_filter ? " (module_srl=" . implode(',', (array)$module_filter) . ")" : ' (all boards)') . " - {$total_documents} total...\n";
 
 $from_srl = 0;
 $scanned = 0;
 $enqueued = 0;
-$skipped_consultation = 0;
 
 while (true)
 {
-	$rows = SearchLogModel::getDocumentBatch($status_list, $from_srl, $scan_batch, $module_srl);
+	$rows = SearchLogModel::getDocumentBatch($status_list, $from_srl, $scan_batch, $module_filter);
 	if (!$rows)
 	{
 		break;
@@ -111,13 +162,8 @@ while (true)
 		$from_srl = max($from_srl, (int)$row->document_srl);
 		$scanned++;
 
-		// 상담 게시판 글은 작성자/관리자 외에는 비공개이므로 색인 대상에서 제외한다.
-		if (EventHandlers::isConsultationModule((int)$row->module_srl))
-		{
-			$skipped_consultation++;
-			continue;
-		}
-
+		// 상담 게시판 글도 색인한다 ("작성 글 보기"에서 찾을 수 있도록 - 일반 검색 노출은
+		// ElasticModel 쪽에서 따로 막는다).
 		$batch[] = ['module_srl' => (int)$row->module_srl, 'document_srl' => (int)$row->document_srl, 'action' => 'update'];
 		$enqueued++;
 
@@ -139,17 +185,77 @@ while (true)
 }
 
 endProgress();
-echo "Enqueued {$enqueued} documents for indexing" . ($skipped_consultation ? " ({$skipped_consultation} consultation-board documents skipped)" : '') . ".\n";
+echo "Enqueued {$enqueued} documents for indexing.\n";
 
-// Optionally process the queue immediately.
+}
+
+// 댓글도 동일한 방식으로 스캔해서 등록한다 (댓글 검색/내 댓글 검색이 ES로 동작하려면 필요).
+if ($scan_comments)
+{
+
+$total_comments = SearchLogModel::getCommentCount(RX_STATUS_PUBLIC, $module_filter);
+if ($limit)
+{
+	$total_comments = min($total_comments, $limit);
+}
+
+echo "\nScanning comments" . ($module_filter ? " (module_srl=" . implode(',', (array)$module_filter) . ")" : ' (all boards)') . " - {$total_comments} total...\n";
+
+$from_srl = 0;
+$scanned = 0;
+$enqueued = 0;
+
+while (true)
+{
+	$rows = SearchLogModel::getCommentBatch(RX_STATUS_PUBLIC, $from_srl, $scan_batch, $module_filter);
+	if (!$rows)
+	{
+		break;
+	}
+
+	$batch = [];
+	foreach ($rows as $row)
+	{
+		$from_srl = max($from_srl, (int)$row->comment_srl);
+		$scanned++;
+
+		// document_srl은 모르는 채로도 동기화는 가능하다 (processPendingCommentLogs가
+		// 댓글을 다시 읽어와 document_srl/category_srl을 직접 확인하기 때문). 상담 게시판
+		// 댓글도 색인한다 ("작성 댓글 보기"에서 찾을 수 있도록).
+		$batch[] = ['module_srl' => (int)$row->module_srl, 'document_srl' => 0, 'comment_srl' => (int)$row->comment_srl, 'action' => 'update'];
+		$enqueued++;
+
+		if ($limit && $enqueued >= $limit)
+		{
+			break;
+		}
+	}
+
+	SearchLogModel::markCommentPendingBatch($batch);
+
+	printProgress('Scanning comments', $scanned, $total_comments);
+
+	if ($limit && $enqueued >= $limit)
+	{
+		break;
+	}
+}
+
+endProgress();
+echo "Enqueued {$enqueued} comments for indexing.\n";
+
+}
+
+if ($sync_only)
+{
+	echo "Skipping scan (--sync-only); processing existing sync queue only.\n";
+}
+
 if ($do_sync)
 {
-	// 대량 Bulk 요청 처리 중 응답이 일부 누락되어 실패로 남은 항목들을 재시도 대상으로 되돌린다.
 	SearchLogModel::requeueFailed();
 
 	$sync_batch = max(1, (int)($options['sync-batch'] ?? 500));
-	// getPendingCount()는 방금 등록한 $enqueued건을 이미 포함하고 있으므로 더해서는 안 된다
-	// (더하면 분모가 거의 두 배가 되어, 실제로는 다 처리됐는데도 진행률이 50%대에서 멈춘 것처럼 보인다).
 	$sync_total = SearchLogModel::getPendingCount();
 
 	echo "Processing the sync queue (bulk batch size {$sync_batch})...\n";
@@ -162,8 +268,6 @@ if ($do_sync)
 		$total_processed += $processed;
 		printProgress('Indexing', $total_processed, $sync_total);
 
-		// 응답 누락 등으로 같은 항목이 계속 pending으로 남아 처리량이 줄지 않으면
-		// (예: ES가 응답을 못하는 상태) 무한 루프에 빠지지 않도록 몇 차례 후 중단한다.
 		$current_pending = SearchLogModel::getPendingCount();
 		if ($current_pending >= $prev_pending)
 		{
@@ -171,7 +275,7 @@ if ($do_sync)
 			if ($stalled_rounds >= 5)
 			{
 				endProgress();
-				echo "Warning: no progress after {$stalled_rounds} rounds, stopping early. {$current_pending} documents still pending - check ES connectivity and re-run later.\n";
+				echo "Warning: no progress after {$stalled_rounds} rounds, stopping early. {$current_pending} items still pending - check ES connectivity and re-run later.\n";
 				break;
 			}
 		}
@@ -182,12 +286,12 @@ if ($do_sync)
 		$prev_pending = $current_pending;
 	}
 	endProgress();
-	echo "Done. {$total_processed} documents indexed.\n";
+	echo "Done. {$total_processed} items indexed.\n";
 
 	$failed = SearchLogModel::getFailedCount();
 	if ($failed)
 	{
-		echo "Warning: {$failed} documents failed to index. Check the admin screen for details.\n";
+		echo "Warning: {$failed} items failed to index. Check the admin screen for details.\n";
 	}
 }
 else
