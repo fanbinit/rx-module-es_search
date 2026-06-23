@@ -4,7 +4,9 @@ namespace Rhymix\Modules\Es_search\Models;
 
 use BaseObject;
 use CommentModel;
+use Context;
 use DocumentModel;
+use ModuleModel;
 use PageHandler;
 use Rhymix\Framework\Session;
 use Elastic\Elasticsearch\Client;
@@ -588,6 +590,46 @@ class Elastic
 	}
 
 	/**
+	 * 검색 요청이 비밀댓글까지 볼 수 있는 권한인지 확인한다 (searchComment()의 비밀댓글
+	 * 제외 여부 판단용). document.model.php의 _setSearchOption()이 'comment' 검색
+	 * 대상에서 comment_is_secret을 정하는 로직과 동일한 기준을 쓴다:
+	 *  - 검색 요청이 이미 본인 글/댓글로만 한정되어 있다면(member_srl이 본인) 항상 허용.
+	 *  - 그렇지 않다면, 검색 대상 게시판(module_srl) 전체에 대해 매니저 권한이 있어야 허용.
+	 *    (module_srl이 없으면 권한 없음으로 취급 - 안전한 기본값)
+	 *
+	 * @param object $obj
+	 * @return bool
+	 */
+	protected static function canViewSecretComments(object $obj): bool
+	{
+		if (!empty($obj->member_srl))
+		{
+			$my_srl = Session::getMemberSrl();
+			$member_srls = array_map('intval', (array)$obj->member_srl);
+			if ($my_srl && !array_diff($member_srls, [$my_srl, -$my_srl]))
+			{
+				return true;
+			}
+		}
+
+		$logged_info = Context::get('logged_info');
+		$module_srls = (array)($obj->module_srl ?? []);
+		if (!$module_srls)
+		{
+			$module_srls = [null];
+		}
+		foreach ($module_srls as $module_srl)
+		{
+			$module_info = $module_srl ? ModuleModel::getModuleInfoByModuleSrl((int)$module_srl) : null;
+			if (!ModuleModel::getGrant($module_info, $logged_info)->manager)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
 	 * search_target=comment 검색을 수행한다 (document.getDocumentListWithinComment에 대응).
 	 *
 	 * 댓글 내용으로 검색하지만, 목록에는 댓글이 아니라 "댓글이 달린 글"을 중복 없이 표시해야
@@ -632,8 +674,12 @@ class Elastic
 		{
 			$filter[] = ['terms' => ['category_srl' => array_map('intval', (array)$obj->category_srl)]];
 		}
-		// 비밀 댓글은, 관리자가 아니면 검색 결과에서 내용이 노출되지 않도록 제외한다.
-		if (!Session::isAdmin())
+		// 비밀 댓글은, 검색 대상 게시판(들)의 매니저가 아니면 검색 결과에서 내용이 노출되지
+		// 않도록 제외한다. document.model.php의 _setSearchOption()이 comment_is_secret을
+		// 정하는 방식(검색 대상 게시판 전체에 대해 매니저 권한이 있어야 비밀글도 보임)과
+		// 기준을 맞춘 것이다 - 최고관리자 여부만 보면 게시판 매니저(최고관리자 아님)가 자기
+		// 게시판에서 비밀댓글을 못 찾는 차이가 생긴다.
+		if (!self::canViewSecretComments($obj))
 		{
 			$filter[] = ['term' => ['is_secret' => 'N']];
 		}
