@@ -18,9 +18,9 @@ use Rhymix\Modules\Es_search\Models\SearchLog as SearchLogModel;
 class EventHandlers extends Base
 {
 	/**
-	 * 검색 가능한 search_target 목록 (제목/본문 검색만 ES로 대체한다).
+	 * 검색 가능한 search_target 목록 (제목/본문/회원번호/별명/사용자 ID/등록일 검색을 ES로 대체한다).
 	 */
-	protected const SEARCHABLE_TARGETS = ['title', 'content', 'title_content'];
+	protected const SEARCHABLE_TARGETS = ['title', 'content', 'title_content', 'member_srl', 'nick_name', 'user_id', 'regdate'];
 
 	/**
 	 * document.getDocumentList (before)

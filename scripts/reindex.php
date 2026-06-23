@@ -148,12 +148,14 @@ if ($do_sync)
 	SearchLogModel::requeueFailed();
 
 	$sync_batch = max(1, (int)($options['sync-batch'] ?? 500));
-	$sync_total = $enqueued + SearchLogModel::getPendingCount();
+	// getPendingCount()는 방금 등록한 $enqueued건을 이미 포함하고 있으므로 더해서는 안 된다
+	// (더하면 분모가 거의 두 배가 되어, 실제로는 다 처리됐는데도 진행률이 50%대에서 멈춘 것처럼 보인다).
+	$sync_total = SearchLogModel::getPendingCount();
 
 	echo "Processing the sync queue (bulk batch size {$sync_batch})...\n";
 	$total_processed = 0;
 	$stalled_rounds = 0;
-	$prev_pending = SearchLogModel::getPendingCount();
+	$prev_pending = $sync_total;
 
 	while (($processed = EventHandlers::processPendingLogs($sync_batch)) > 0)
 	{

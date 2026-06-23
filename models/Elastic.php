@@ -120,6 +120,8 @@ class Elastic
 						'module_srl' => ['type' => 'long'],
 						'category_srl' => ['type' => 'long'],
 						'member_srl' => ['type' => 'long'],
+						'user_id' => ['type' => 'keyword'],
+						'nick_name' => ['type' => 'keyword'],
 						'title' => ['type' => 'text', 'analyzer' => 'es_search_nori_analyzer'],
 						'content' => ['type' => 'text', 'analyzer' => 'es_search_nori_analyzer'],
 						'status' => ['type' => 'keyword'],
@@ -149,6 +151,8 @@ class Elastic
 			'module_srl' => (int)$oDocument->get('module_srl'),
 			'category_srl' => (int)$oDocument->get('category_srl'),
 			'member_srl' => (int)$oDocument->get('member_srl'),
+			'user_id' => (string)$oDocument->get('user_id'),
+			'nick_name' => (string)$oDocument->get('nick_name'),
 			'title' => $oDocument->get('title'),
 			'content' => $oDocument->getContentText(),
 			'status' => $oDocument->get('status'),
@@ -338,18 +342,15 @@ class Elastic
 		$list_count = max(1, (int)($obj->list_count ?? 20));
 		$page_count = max(1, (int)($obj->page_count ?? 10));
 
-		// type을 지정하지 않으면 기본값(best_fields, OR)이 적용되어, nori가 "24일"을
-		// "24"/"일"처럼 여러 토큰으로 쪼갰을 때 "일"처럼 흔한 토큰 하나만 들어간 무관한
-		// 글까지 매칭되어버린다. phrase로 지정하면 토큰들이 원문과 같은 순서로 붙어 있는
-		// 경우만 매칭되어, DB의 부분 일치(LIKE) 검색과 가까운 결과를 얻을 수 있다.
-		$must = [[
-			'multi_match' => [
-				'query' => $obj->search_keyword,
-				'fields' => ['title^3', 'content'],
-				'type' => 'phrase',
-			],
-		]];
+		$must = [self::buildSearchQuery($obj)];
 		$filter = [];
+
+		// 작성글 보기(dispMemberOwnDocument) 등 호출부가 글쓴이 본인 글로 결과를 한정하기 위해
+		// 넘기는 필터다. 이 필터가 없으면(과거 버그) 검색이 전체 글을 대상으로 동작해버린다.
+		if (!empty($obj->member_srl))
+		{
+			$filter[] = ['terms' => ['member_srl' => array_map('intval', (array)$obj->member_srl)]];
+		}
 
 		if (!empty($obj->module_srl))
 		{
@@ -393,6 +394,68 @@ class Elastic
 		}
 
 		return self::buildListOutput($data, $total_count, $obj);
+	}
+
+	/**
+	 * search_target에 따라 ES 쿼리(must 절 하나)를 만든다.
+	 *
+	 * document.getDocumentList의 search_target별 동작(document.model.php의
+	 * _setSearchOption)을 ES 쿼리로 옮긴 것이다:
+	 * - title: 제목만 검색 (s_title만 설정됨)
+	 * - content: 본문만 검색 (s_content만 설정됨)
+	 * - title_content: 제목+본문 검색 (s_title, s_content 둘 다 OR로 설정됨)
+	 * - member_srl: 글쓴이 회원번호로 정확히 일치하는 글 (s_member_srl = equal)
+	 * - nick_name/user_id: 별명/사용자 ID 부분 일치 (s_nick_name/s_user_id = like_prefix,
+	 *   공백은 중간 와일드카드로 취급됨 - str_replace(' ', '%', ...))
+	 * - regdate: 등록일 앞부분 일치 (s_regdate = like_prefix, 숫자만 추출)
+	 *
+	 * @param object $obj
+	 * @return array
+	 */
+	protected static function buildSearchQuery(object $obj): array
+	{
+		$search_target = (string)($obj->search_target ?? '');
+		$keyword = (string)$obj->search_keyword;
+
+		switch ($search_target)
+		{
+			case 'member_srl':
+				return ['term' => ['member_srl' => (int)$keyword]];
+
+			case 'nick_name':
+			case 'user_id':
+				$pattern = str_replace(' ', '*', $keyword) . '*';
+				return ['wildcard' => [$search_target => ['value' => $pattern, 'case_insensitive' => true]]];
+
+			case 'regdate':
+				$digits = preg_replace('/[^\d]/', '', $keyword);
+				return ['prefix' => ['regdate' => $digits]];
+
+			case 'title':
+				$fields = ['title'];
+				break;
+
+			case 'content':
+				$fields = ['content'];
+				break;
+
+			default:
+				// title_content 및 그 외 알 수 없는 값은 기존처럼 제목+본문을 모두 검색한다.
+				$fields = ['title^3', 'content'];
+				break;
+		}
+
+		// type을 지정하지 않으면 기본값(best_fields, OR)이 적용되어, nori가 "24일"을
+		// "24"/"일"처럼 여러 토큰으로 쪼갰을 때 "일"처럼 흔한 토큰 하나만 들어간 무관한
+		// 글까지 매칭되어버린다. phrase로 지정하면 토큰들이 원문과 같은 순서로 붙어 있는
+		// 경우만 매칭되어, DB의 부분 일치(LIKE) 검색과 가까운 결과를 얻을 수 있다.
+		return [
+			'multi_match' => [
+				'query' => $keyword,
+				'fields' => $fields,
+				'type' => 'phrase',
+			],
+		];
 	}
 
 	/**
