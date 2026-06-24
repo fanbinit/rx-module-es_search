@@ -12,6 +12,8 @@ use Rhymix\Framework\Session;
 use Elastic\Elasticsearch\Client;
 use Elastic\Elasticsearch\ClientBuilder;
 
+require_once(_XE_PATH_.'modules/es_search/vendor/autoload.php');
+
 /**
  * ElasticSearch 클라이언트 래퍼.
  *
@@ -114,6 +116,7 @@ class Elastic
 			'index' => $index,
 			'body' => [
 				'settings' => [
+					'number_of_replicas' => 0,
 					'analysis' => [
 						'tokenizer' => [
 							'es_search_nori_tokenizer' => [
@@ -185,6 +188,7 @@ class Elastic
 			'index' => $index,
 			'body' => [
 				'settings' => [
+					'number_of_replicas' => 0,
 					'analysis' => [
 						'tokenizer' => [
 							'es_search_nori_tokenizer' => [
